@@ -27,7 +27,28 @@ public static class CombatAnimationWarmupPatches
     private const string ModeAll = "all";
     private const int MaxClipsPerCreature = 128;
 
+    // Total rendered poses one combat may spend (see the pose-budget comment in the warmup loop).
+    private const int MaxWarmupPoseFrames = 216;
+    private const int MinWarmupPosesPerClip = 2;
+
+    // Poses stepped between two presented frames. 1 = the original one-frame-per-pose pacing.
+    private const int PosesPerPresentedFrame = 2;
+
+    private static int ResolvePoseBudget(int requestedPoses, int plannedClips)
+    {
+        if (plannedClips <= 0 || requestedPoses <= 0)
+            return Math.Max(1, requestedPoses);
+        int affordable = MaxWarmupPoseFrames / plannedClips;
+        return Math.Max(MinWarmupPosesPerClip, Math.Min(requestedPoses, affordable));
+    }
+
     private static readonly ConditionalWeakTable<NCombatRoom, WarmupState> RoomStates = new();
+
+    // Handle for the in-flight warmup so the room reveal (CombatWarmupRevealGatePatches) can wait
+    // for it instead of fading the transition out underneath it.
+    internal static Task CurrentRoomWarmup;
+
+    private static NCombatRoom CurrentWarmupRoom;
 
     public static void Apply(Harmony harmony)
     {
@@ -52,10 +73,10 @@ public static class CombatAnimationWarmupPatches
                 return;
             state.Started = true;
 
-            Callable.From(() =>
-            {
-                _ = WarmupCombatAnimationsAsync(__instance, mode, GetWarmupFrames(), hitEffectWarmup);
-            }).CallDeferred();
+            // Arm the handle synchronously: NTransition.RoomFadeIn can arrive before a deferred
+            // callable runs, and an unarmed gate would let the reveal fade out mid-warmup.
+            CurrentWarmupRoom = __instance;
+            CurrentRoomWarmup = WarmupCombatAnimationsAsync(__instance, mode, GetWarmupFrames(), hitEffectWarmup);
         }
         catch (Exception exception)
         {
@@ -72,6 +93,10 @@ public static class CombatAnimationWarmupPatches
         int warmedHitEffects = 0;
         int warmedHitAudio = 0;
         int failedHitEffects = 0;
+        ulong previewMs = 0;
+        ulong poseMs = 0;
+        int plannedClips = 0;
+        int posesPerClip = 0;
         try
         {
             await WaitForFramesAsync(2);
@@ -85,41 +110,83 @@ public static class CombatAnimationWarmupPatches
                 return;
 
             PatchHelper.Log($"Combat animation warmup begin: mode={mode} creatures={creatures.Length:N0} frames={frames:N0} hit_effects={hitEffectWarmup}.");
-            ColorRect warmupMask = CreateWarmupMask(room);
-            if (warmupMask != null)
+            ColorRect warmupMask = null;
+            if (CombatWarmupRevealGatePatches.IsTransitionCovering())
+            {
+                // The game's own transition already covers the room and the reveal is gated on this
+                // task, so an extra full-screen cover would only add a second black phase.
+                Diag($"step=cover=game_transition t={Time.GetTicksMsec()}");
+            }
+            else
+            {
+                Diag($"step=mask_begin {CombatWarmupRevealGatePatches.DescribeCoverState()}");
+                warmupMask = CreateWarmupMask(room);
+                Diag($"step=mask_done created={warmupMask != null}");
+                if (warmupMask == null)
+                    return;
                 await WaitForFramesAsync(1);
-            if (warmupMask == null)
-                return;
+            }
             try
             {
                 if (mode != ModeOff)
                 {
+                    // Pose budget: hold time measures at ~19-26ms per rendered pose, so a 3-4 creature
+                    // fight at 12 poses per clip (29-32 clips) runs 6.5-7.6s while a 2 creature fight
+                    // (13-19 clips) runs ~4s. Spend a fixed total per fight instead: small fights keep
+                    // the requested pose count, big fights get fewer poses per clip.
+                    var plan = new List<(NCreature Creature, string[] Clips)>();
+                    plannedClips = 0;
                     foreach (NCreature creature in creatures)
+                    {
+                        if (!IsActiveRoom(room) || !IsWarmableCreature(creature))
+                            continue;
+                        try
+                        {
+                            string[] names = CollectWarmupAnimationNames(creature, mode);
+                            Diag($"step=names_collected creature={DescribeCreature(creature)} clips={names.Length}");
+                            if (names.Length == 0)
+                                continue;
+                            plan.Add((creature, names));
+                            plannedClips += names.Length;
+                        }
+                        catch (Exception exception)
+                        {
+                            failedClips++;
+                            PatchHelper.Log($"Combat animation warmup skipped creature={DescribeCreature(creature)}: {exception.GetType().Name}: {exception.Message}");
+                        }
+                    }
+                    int poses = ResolvePoseBudget(frames, plannedClips);
+                    posesPerClip = poses;
+                    PatchHelper.Log($"Combat animation warmup plan: creatures={plan.Count:N0} clips={plannedClips:N0} poses_per_clip={poses:N0} requested={frames:N0} budget={MaxWarmupPoseFrames:N0}.");
+
+                    foreach ((NCreature creature, string[] animationNames) in plan)
                     {
                         if (!IsActiveRoom(room) || !IsWarmableCreature(creature))
                             continue;
                         Node2D preview = null;
                         try
                         {
-                            string[] animationNames = CollectWarmupAnimationNames(creature, mode);
-                            if (animationNames.Length == 0)
-                                continue;
+                            ulong previewStarted = Time.GetTicksMsec();
                             preview = CreateSpinePreview(room, creature);
+                            previewMs += Time.GetTicksMsec() - previewStarted;
                             if (preview == null)
                                 continue;
                             await WaitForFramesAsync(2);
+                            Diag("step=preview_frames_settled");
                             warmedCreatures++;
                             if (IsPreloadDebugEnabled())
                                 PatchHelper.Log($"Combat animation warmup creature={DescribeCreature(creature)} isolated_clips=[{DescribeList(animationNames)}].");
+                            ulong poseStarted = Time.GetTicksMsec();
                             foreach (string animationName in animationNames)
                             {
                                 if (!IsActiveRoom(room) || !IsValid(preview) || !preview.IsInsideTree())
                                     break;
-                                if (await WarmAnimationClipAsync(room, preview, animationName, frames))
+                                if (await WarmAnimationClipAsync(room, preview, animationName, poses))
                                     warmedClips++;
                                 else
                                     failedClips++;
                             }
+                            poseMs += Time.GetTicksMsec() - poseStarted;
                         }
                         catch (Exception exception)
                         {
@@ -128,7 +195,11 @@ public static class CombatAnimationWarmupPatches
                         }
                         finally
                         {
+                            Diag($"step=freeing_preview creature={DescribeCreature(creature)} valid={IsValid(preview)}");
+                            ulong freeStarted = Time.GetTicksMsec();
                             FreeWarmupNode(preview);
+                            previewMs += Time.GetTicksMsec() - freeStarted;
+                            Diag("step=preview_freed");
                             await WaitForFramesAsync(1);
                         }
                     }
@@ -146,11 +217,19 @@ public static class CombatAnimationWarmupPatches
                     await WaitForFramesAsync(1);
             }
 
-            PatchHelper.Log($"Combat animation warmup complete: mode={mode} isolated=true creatures={warmedCreatures:N0}/{creatures.Length:N0} clips={warmedClips:N0} clip_failed={failedClips:N0} hit_effects={warmedHitEffects:N0} hit_audio={warmedHitAudio:N0} hit_effect_failed={failedHitEffects:N0} elapsed={Time.GetTicksMsec() - started:N0}ms.");
+            PatchHelper.Log($"Combat animation warmup complete: mode={mode} isolated=true creatures={warmedCreatures:N0}/{creatures.Length:N0} clips={warmedClips:N0} clip_failed={failedClips:N0} hit_effects={warmedHitEffects:N0} hit_audio={warmedHitAudio:N0} hit_effect_failed={failedHitEffects:N0} poses_per_clip={posesPerClip:N0} preview_ms={previewMs:N0} pose_ms={poseMs:N0} elapsed={Time.GetTicksMsec() - started:N0}ms.");
         }
         catch (Exception exception)
         {
             PatchHelper.Log($"Combat animation warmup failed: {exception}");
+        }
+        finally
+        {
+            if (ReferenceEquals(CurrentWarmupRoom, room))
+            {
+                CurrentWarmupRoom = null;
+                CurrentRoomWarmup = null;
+            }
         }
     }
 
@@ -408,6 +487,21 @@ public static class CombatAnimationWarmupPatches
         }
     }
 
+    // Duplicate() copies a node's internal children as regular children, so the preview's
+    // object graph no longer matches what the native SpineSprite holds references to: freeing
+    // those copies crashed the process on the preview's first rendered frame. Keeping the graph
+    // intact and only stopping the copies from drawing/processing avoids that, while the
+    // preview SpineSprite itself stays visible so the warmup really reaches the renderer.
+    private static void SuppressPreviewChildren(Node preview)
+    {
+        foreach (Node child in preview.GetChildren())
+        {
+            if (child is CanvasItem canvasItem)
+                canvasItem.Hide();
+            child.ProcessMode = Node.ProcessModeEnum.Disabled;
+        }
+    }
+
     private static Node2D CreateSpinePreview(NCombatRoom room, NCreature creature)
     {
         if (creature.Visuals?.SpineBody?.BoundObject is not Node2D source
@@ -415,19 +509,21 @@ public static class CombatAnimationWarmupPatches
             return null;
         // No scripts, signal connections, groups, or scene re-instantiation.
         // Only the native visual is copied; never clone NCreature or its animator.
-        var preview = source.Duplicate(0) as Node2D;
+        Diag($"step=duplicate_begin creature={DescribeCreature(creature)} source_children={source.GetChildCount()}");
+        var preview = source.Duplicate() as Node2D;
         if (preview == null)
             return null;
+        Diag($"step=duplicate_done preview_children={preview.GetChildCount()} inside_tree={preview.IsInsideTree()}");
         try
         {
-            // Child emitters/audio players can autoplay even without scripts.
-            // The native SpineSprite alone owns the skeleton rendering we warm.
-            while (preview.GetChildCount() > 0)
-                preview.GetChild(0).Free();
+            SuppressPreviewChildren(preview);
+            Diag($"step=preview_children_suppressed remaining={preview.GetChildCount()}");
             preview.ZIndex = 0;
             preview.ZAsRelative = false;
             room.AddChild(preview);
+            Diag("step=preview_added_to_room");
             preview.GlobalTransform = source.GlobalTransform;
+            Diag("step=preview_transform_set");
             return preview;
         }
         catch
@@ -467,7 +563,10 @@ public static class CombatAnimationWarmupPatches
                 }
                 state.Call("update", 0f).Dispose();
                 state.Call("apply", skeleton).Dispose();
-                await WaitForFramesAsync(1);
+                // The hold is paid in presented frames (measured 26-39ms per pose at p50 frame time
+                // ~26.5ms), not in poses: step the pose every iteration, present every Nth one.
+                if (samples == 1 || (i + 1) % PosesPerPresentedFrame == 0 || i == samples - 1)
+                    await WaitForFramesAsync(1);
             }
             return true;
         }
@@ -498,6 +597,7 @@ public static class CombatAnimationWarmupPatches
         MegaSprite sprite = creature.Visuals?.SpineBody;
         MegaSkeleton skeleton = sprite?.GetSkeleton();
         MegaSkeletonDataResource data = skeleton?.GetData();
+        Diag($"step=skeleton_data creature={DescribeCreature(creature)} has_data={data != null}");
         if (data == null)
             yield break;
 
@@ -650,7 +750,7 @@ public static class CombatAnimationWarmupPatches
     {
         if (!AndroidSettingsBridge.GetBool("preload_enabled", true))
             return ModeOff;
-        string value = AndroidSettingsBridge.GetString("preload_combat_animation_warmup_mode", ModeOff).Trim().ToLowerInvariant();
+        string value = AndroidSettingsBridge.GetString("preload_combat_animation_warmup_mode", ModeAll).Trim().ToLowerInvariant();
         return value switch
         {
             "safe" or "current_room_safe" or "room_safe" => ModeSafe,
@@ -674,6 +774,12 @@ public static class CombatAnimationWarmupPatches
     }
 
     private static bool IsPreloadDebugEnabled() => AndroidSettingsBridge.GetBool("preload_debug_enabled", false);
+
+    private static void Diag(string message)
+    {
+        if (IsPreloadDebugEnabled())
+            PatchHelper.Log($"[WarmupDiag] {message}");
+    }
 
     private static string DescribeCreature(NCreature creature)
     {

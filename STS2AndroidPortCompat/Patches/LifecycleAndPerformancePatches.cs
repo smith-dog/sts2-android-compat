@@ -284,12 +284,12 @@ public static class LifecycleAndPerformancePatches
             return;
         try
         {
-            var filtered = FilterAndroidProtectedAssets(__0, out int skipped);
+            var filtered = FilterAndroidProtectedAssets(__0, out int skipped, out string skippedByCategory);
             if (skipped > 0)
             {
                 __0 = filtered;
                 if (IsPreloadDebugEnabled())
-                    PatchHelper.Log($"[PreloadDiag] protected Android runtime cache skipped {skipped:N0} unload candidate(s).");
+                    PatchHelper.Log($"[PreloadDiag] protected Android runtime cache skipped {skipped:N0} unload candidate(s) by_category=[{skippedByCategory}].");
             }
         }
         catch (Exception exception)
@@ -503,7 +503,34 @@ public static class LifecycleAndPerformancePatches
         {
             AddAssetSet(result, "LearnedWarmAssets", GetLearnedWarmAssetPaths);
         }
-        return result.Where(IsLoadableWarmPath).OrderBy(path => path, StringComparer.Ordinal).ToArray();
+        var candidates = result.Where(IsLoadableWarmPath).ToArray();
+        var loadable = new List<string>(candidates.Length);
+        int missingInBuild = 0;
+        foreach (string path in candidates)
+        {
+            if (ExistsInBuild(path))
+                loadable.Add(path);
+            else
+                missingInBuild++;
+        }
+        if (missingInBuild > 0)
+            PatchHelper.Log($"[PreloadDiag] warm path filter dropped {missingInBuild:N0} asset(s) not present in this build ({candidates.Length - missingInBuild:N0}/{candidates.Length:N0} kept).");
+        return loadable.OrderBy(path => path, StringComparer.Ordinal).ToArray();
+    }
+
+    // The official Android PCK does not contain every path the desktop asset lists reference, and each
+    // missing one costs a failed ResourceLoader.Load plus a C# backtrace in the log.
+    private static bool ExistsInBuild(string path)
+    {
+        try
+        {
+            return ResourceLoader.Exists(path, "");
+        }
+        catch
+        {
+            // A probe that cannot judge must not drop a real asset.
+            return true;
+        }
     }
 
     private static async Task LoadAndCacheAssetsAsync(IReadOnlyList<string> assetPaths, AndroidStartupLoadingScreen loadingScreen, string title, float progressStart, float progressEnd)
@@ -735,26 +762,34 @@ public static class LifecycleAndPerformancePatches
         }
     }
 
-    private static IEnumerable<string> FilterAndroidProtectedAssets(IEnumerable<string> paths, out int skipped)
+    private static IEnumerable<string> FilterAndroidProtectedAssets(IEnumerable<string> paths, out int skipped, out string skippedByCategory)
     {
         string[] protectedPaths = GetAndroidProtectedAssetPaths();
         if (protectedPaths.Length == 0)
         {
             skipped = 0;
+            skippedByCategory = "";
             return paths;
         }
         var protectedSet = new HashSet<string>(protectedPaths, StringComparer.Ordinal);
         var result = new List<string>();
+        var categories = new SortedDictionary<string, int>(StringComparer.Ordinal);
         skipped = 0;
         foreach (string path in paths)
         {
             if (protectedSet.Contains(path))
             {
                 skipped++;
+                string category = CategorizeAssetPath(path);
+                categories.TryGetValue(category, out int count);
+                categories[category] = count + 1;
                 continue;
             }
             result.Add(path);
         }
+        skippedByCategory = categories.Count == 0
+            ? ""
+            : string.Join(",", categories.Select(pair => $"{pair.Key}={pair.Value:N0}"));
         return result;
     }
 
@@ -1331,7 +1366,9 @@ public static class LifecycleAndPerformancePatches
     {
         if (!IsMasterPreloadEnabled())
             return "off";
-        return AndroidSettingsBridge.GetString("preload_combat_animation_warmup_mode", "off").Trim().ToLowerInvariant();
+        // On-by-default: measured on device it costs only loading-screen time (1.8-4.0 s per combat),
+        // no measurable GPU memory, and it is what keeps an animation's first frames from stalling.
+        return AndroidSettingsBridge.GetString("preload_combat_animation_warmup_mode", "all").Trim().ToLowerInvariant();
     }
 
     private static int GetCombatAnimationWarmupFrames()

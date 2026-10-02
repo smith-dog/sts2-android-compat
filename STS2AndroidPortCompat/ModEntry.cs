@@ -136,11 +136,15 @@ public static class ModEntry
             ExtendedMultiplayerRoomPatches.Apply(_harmony);
             IntentAnimationPatches.Apply(_harmony);
             CombatAnimationWarmupPatches.Apply(_harmony);
+            CombatWarmupRevealGatePatches.Apply(_harmony);
             CombatVfxPoolPatches.Apply(_harmony);
             RuntimeAssetLoadingPatches.Apply(_harmony);
+            SpineSkeletonDataSafetyPatches.Apply(_harmony);
             QuickRestartPatches.Apply(_harmony);
             LifecycleAndPerformancePatches.Apply(_harmony);
         });
+
+        ApplyPatchGroup("Android frame time recorder", () => AndroidFrameTimeRecorderPatches.Apply(_harmony));
 
         ApplyPatchGroup("LAN/mod-loader diagnostic patches", () =>
         {

@@ -137,6 +137,7 @@ public static class ModEntry
             IntentAnimationPatches.Apply(_harmony);
             CombatAnimationWarmupPatches.Apply(_harmony);
             CombatWarmupRevealGatePatches.Apply(_harmony);
+            CombatGcLatencyPatches.Apply(_harmony);
             CombatVfxPoolPatches.Apply(_harmony);
             RuntimeAssetLoadingPatches.Apply(_harmony);
             SpineSkeletonDataSafetyPatches.Apply(_harmony);

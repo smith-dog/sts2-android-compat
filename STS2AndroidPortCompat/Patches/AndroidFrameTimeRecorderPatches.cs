@@ -115,7 +115,25 @@ public static class AndroidFrameTimeRecorderPatches
             {
                 _windowStall++;
                 ulong nowMs = Time.GetTicksMsec();
-                PatchHelper.Log($"[FrameDiag] stall t={nowMs} ms={ms:F1} frame={_frames:N0} phase={CurrentPhase()}.");
+                // Spike attribution: high frame_setup = CPU scene prep (Spine/nodes);
+                // low setup with a long frame = GPU submit/fill wait. Draw call and
+                // primitive counts distinguish geometry-heavy from fill-heavy frames.
+                long setupUsec = 0;
+                int drawCalls = -1;
+                long primitives = -1;
+                try
+                {
+                    setupUsec = (long)RenderingServer.Singleton.Get("get_frame_setup_time_cpu");
+                    drawCalls = Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame).ToString().Length > 0
+                        ? (int)Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame)
+                        : -1;
+                    primitives = (long)Performance.GetMonitor(Performance.Monitor.RenderTotalPrimitivesInFrame);
+                }
+                catch
+                {
+                    // Metric unavailability must not break the recorder; keep raw timing only.
+                }
+                PatchHelper.Log($"[FrameDiag] stall t={nowMs} ms={ms:F1} frame={_frames:N0} phase={CurrentPhase()} setup={setupUsec / 1000.0:F1}ms draws={drawCalls:N0} prims={primitives:N0} gc0={System.GC.CollectionCount(0)} gc1={System.GC.CollectionCount(1)} gc2={System.GC.CollectionCount(2)}.");
                 if (ms > SnapshotMilliseconds && (_lastSnapshotMs == 0UL || nowMs - _lastSnapshotMs >= SnapshotThrottleMs))
                 {
                     _lastSnapshotMs = nowMs;
@@ -142,6 +160,9 @@ public static class AndroidFrameTimeRecorderPatches
         double average = _windowSumMs / Math.Max(1, _windowFrames);
         PatchHelper.Log($"[FrameDiag] window t={Time.GetTicksMsec()} frames={_windowFrames:N0} avg={average:F2}ms max={_windowMaxMs:F1}ms " +
             $">slow={_windowSlow:N0} >stall={_windowStall:N0} session_worst={_worstMs:F1}ms phase={CurrentPhase()} " +
+            $"gc0={System.GC.CollectionCount(0)} gc1={System.GC.CollectionCount(1)} gc2={System.GC.CollectionCount(2)} " +
+            $"setup={RenderingServer.Singleton.Get("get_frame_setup_time_cpu")}us " +
+            $"draws={Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame):N0} prims={Performance.GetMonitor(Performance.Monitor.RenderTotalPrimitivesInFrame):N0} " +
             $"buckets[<=8]={Buckets[0]:N0}[<=12]={Buckets[1]:N0}[<=16]={Buckets[2]:N0}[<=20]={Buckets[3]:N0}" +
             $"[<=25]={Buckets[4]:N0}[<=33]={Buckets[5]:N0}[<=50]={Buckets[6]:N0}[<=100]={Buckets[7]:N0}[>100]={Buckets[8]:N0}.");
         // The game's profiler prints StaticMem/VRAM/objects/nodes/orphans/cached assets/GC generations

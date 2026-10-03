@@ -21,6 +21,25 @@ public static class ModEntry
     private static bool _applied;
     private static Harmony _harmony;
 
+    // Godot's StringName debug check aborts the process with "BUG: Unreferenced
+    // static string to 0" when a C#-created StringName wrapper is collected
+    // while the native side still uses the name (observed 2026-10-03 for
+    // "_recognize_path" and earlier for "_shaped_text_closest_character_pos",
+    // both causing JNI aborts). Holding managed wrappers forever keeps each
+    // native refcount above zero for the whole session.
+    private static readonly StringName[] PinnedStaticStringNames =
+    {
+        new("_recognize_path"),
+        new("_shaped_text_closest_character_pos"),
+    };
+
+    private static void PinStaticStringNames()
+    {
+        // Touch the wrappers so the type initializer has definitely run before
+        // the engine or any patch starts resolving these names.
+        _ = PinnedStaticStringNames.Length;
+    }
+
     [UnmanagedCallersOnly]
     public static int InitializeGodotSharp(IntPtr godotDllHandle, IntPtr outManagedCallbacks, IntPtr unmanagedCallbacks, int unmanagedCallbacksSize)
     {
@@ -57,6 +76,7 @@ public static class ModEntry
 
         PatchHelper.Log("Initializing STS2Mobile Android port compatibility.");
         CompatBuildInfo.Log();
+        PinStaticStringNames();
         HarmonyAndroidCompat.Initialize();
         LogRuntimeSnapshot("after_harmony_android_compat_init");
         _harmony = new Harmony("com.sts2mobile");
@@ -145,6 +165,14 @@ public static class ModEntry
             LifecycleAndPerformancePatches.Apply(_harmony);
         });
 
+        // TASK-051 (2026-10-03): the generic VFX pool (CombatVfxPoolPatches.
+        // TryInstallGenericPool) is enabled again. The earlier removal blamed
+        // mass patching for the StringName/JNI aborts, but investigation
+        // showed those crashes are the pre-existing Godot static-StringName
+        // recycling bug (PinnedStaticStringNames above) that also fires with
+        // no pooling active; upstream has the same Android+C# crash cluster
+        // (godotengine/godot #92590/#92319/#97798). Escape hatch without a
+        // rebuild: settings key preload_vfx_pool_scope=stock.
         ApplyPatchGroup("Android frame time recorder", () => AndroidFrameTimeRecorderPatches.Apply(_harmony));
 
         ApplyPatchGroup("LAN/mod-loader diagnostic patches", () =>

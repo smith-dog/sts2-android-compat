@@ -347,7 +347,10 @@ public partial class AndroidStartupLoadingScreen : Control
                         }
                         finally
                         {
-                            FreeWarmupNode(node);
+                            // Retain the fully-warmed tree for pooled reuse instead of
+                            // freeing: card-play spawns of this scene then reuse a tree
+                            // whose _Ready, shaders and pipelines are already hot.
+                            CombatVfxPoolPatches.RetainWarmTree(node, packedScene);
                             node = null;
                         }
                     }
@@ -357,14 +360,14 @@ public partial class AndroidStartupLoadingScreen : Control
                         resourceOnly++;
                         if (treeIneligible <= 20 && IsPreloadDebugEnabled())
                             PatchHelper.Log($"VFX tree warmup resource-only path={path} reason=requires_original_create_or_not_allowlisted scope={normalizedTreeWarmupScope}");
-                        FreeWarmupNode(node);
+                        CombatVfxPoolPatches.RetainWarmTree(node, packedScene);
                         node = null;
                     }
                 }
                 else
                 {
                     resourceOnly++;
-                    FreeWarmupNode(node);
+                    CombatVfxPoolPatches.RetainWarmTree(node, packedScene);
                     node = null;
                 }
             }

@@ -173,8 +173,9 @@ public static class ModEntry
         // no pooling active; upstream has the same Android+C# crash cluster
         // (godotengine/godot #92590/#92319/#97798). Escape hatch without a
         // rebuild: settings key preload_vfx_pool_scope=stock.
-        ApplyPatchGroup("Android frame time recorder", () => AndroidFrameTimeRecorderPatches.Apply(_harmony));
-
+        // AndroidFrameTimeRecorderPatches (FrameDiag window/stall logging) is
+        // diagnostics-only and stays unregistered in normal builds; apply it
+        // manually when frame profiling is needed.
         ApplyPatchGroup("LAN/mod-loader diagnostic patches", () =>
         {
             LanMultiplayerBootstrapPatches.Apply(_harmony);

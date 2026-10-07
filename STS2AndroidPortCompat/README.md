@@ -178,6 +178,15 @@ repository root). Supply `HarmonyReferenceDir` pointing to the packaged runtime
 DLLs; run both the default shape and `-p:LegacyIntent=true`. They exercise actual
 Harmony patches and behavioral transitions without commercial game code.
 
+The in-game Android settings panel offers **High refresh (default)**,
+**Request 60Hz**, and **Follow system**. It saves
+`android_display_refresh_rate_mode=high/60hz/system`, then calls the launcher's
+Java Activity bridge to update its request. `AndroidSettingsMerge` retains the
+string through the original game's typed settings serialization. Legacy
+`android_high_refresh_rate_enabled` booleans are launcher migration inputs only.
+These choices request display policy, not an FPS/VSync change or a guaranteed
+OEM display lock; unavailable 60Hz targets and follow-system clear prior votes.
+
 Startup resource preparation uses the synchronous Godot-thread loading path
 from before the background-loading change. Common/main-menu and learned/gameplay
 warm-cache batches call `ResourceLoader.Load` and yield after every eight visited

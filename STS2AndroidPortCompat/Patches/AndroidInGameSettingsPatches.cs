@@ -288,7 +288,13 @@ public static class AndroidInGameSettingsPatches
 
         AddHeader(content, T("系统 / 兼容", "System / Compatibility"));
         AddSwitchRow(content, "preload_enabled", T("启用预加载", "Enable preload"), true, enabled => PreloadManager.Enabled = enabled);
-        AddSwitchRow(content, "android_high_refresh_rate_enabled", T("请求高刷新率", "Request high refresh rate"), true, null);
+        AddStringPaginatorRow(content, "android_display_refresh_rate_mode", T("屏幕刷新率", "Display refresh rate"),
+            new[]
+            {
+                ("high", T("高刷新率（默认）", "High refresh rate (default)")),
+                ("60hz", T("请求 60 Hz", "Request 60 Hz")),
+                ("system", T("跟随系统", "Follow system")),
+            }, "high", ApplyDisplayRefreshRateMode);
         AddSwitchRow(content, "preload_startup_common_enabled", T("启动通用资源", "Startup common resources"), true, null);
         AddSwitchRow(content, "preload_startup_main_menu_enabled", T("主菜单页面资源", "Main menu resources"), true, null);
         AddSwitchRow(content, "preload_menu_hotspots_enabled", T("常用菜单预热", "Menu hotspot warmup"), false, null);
@@ -304,6 +310,21 @@ public static class AndroidInGameSettingsPatches
         AddIntPaginatorRow(content, "max_multiplayer_players", T("实验性最大联机人数", "Experimental max players"), Range(1, 128, 1), 4, v => v.ToString(), null);
         AddSwitchRow(content, "lan_multiplayer_enabled", T("本地联机补丁", "Local multiplayer patch"), true, null);
         AddTextRow(content, "lan_custom_player_id", T("LAN 自定义玩家 ID", "LAN custom player ID"), "", null);
+    }
+
+    private static void ApplyDisplayRefreshRateMode(string mode)
+    {
+        if (!OS.GetName().Equals("Android", StringComparison.OrdinalIgnoreCase))
+            return;
+        try
+        {
+            var wrapper = (GodotObject)Engine.GetSingleton("JavaClassWrapper").Call("wrap", "com.godot.game.GodotApp");
+            wrapper.Call("applySelectedDisplayRefreshRateFromGame");
+        }
+        catch (Exception exception)
+        {
+            PatchHelper.Log($"GodotApp.applySelectedDisplayRefreshRateFromGame bridge failed: {exception.Message}");
+        }
     }
 
     private static void CaptureOfficialLineStyle(Control panel)

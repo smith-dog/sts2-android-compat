@@ -167,6 +167,13 @@ Current implementation (`STS2AndroidPortCompat`):
   `PeerVersionInfo.LocalDefault()` into the original host/client services and
   lets the original transport-level `HandshakeManager` own version, ModelDb
   hash, and MOD compatibility validation.
+- In-game Android settings expose the launcher's display refresh-rate modes:
+  `android_display_refresh_rate_mode=high/60hz/system`, with high refresh as the
+  default. Changes call the Java Activity bridge immediately, and
+  `AndroidSettingsMerge` preserves the string through the game's typed settings
+  save. Legacy booleans migrate in the launcher; no legacy key is written back.
+  A 60Hz request requires an exposed compatible target; follow-system clears the
+  app's Window/Surface request. Neither mode changes the game's FPS cap or VSync.
 - Layout scale subscriptions are owned by scene-node lifetime: detach on
   `TreeExiting`, restore on reentry, and ignore repeated Ready registration.
   Old rooms and event layouts no longer need a later scale change to be collectible.

@@ -26,6 +26,7 @@ public partial class Main : Node
             await Frame();
             await CheckShaderLifecycle(game);
             await CheckVfxReuse();
+            await CheckExpandedVfxReuse();
             await CheckRuntimeBudgets();
             await CheckMenuLayoutRoundTrip();
             await CheckFontScaling();

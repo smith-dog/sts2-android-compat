@@ -208,13 +208,22 @@ phase. Repeated processing in the same frame cannot renew the quota. The game
 still owns completion, errors, its existing in-flight limit and serial VFX loads.
 Deferred queues remain intact; loading may take longer, but never falsely finish.
 
-`CombatVfxPoolPatches` reuses completed stock damage numbers, hit sparks and shivs
-within one combat room, retaining at most 16/8/8 idle instances. Overflow still
-creates complete effects. Original factories, Ready and playback timing execute;
-immutable async leases prevent an old continuation from releasing a later rental.
-External removal keeps original destruction, and room exit frees idle instances.
-Node state is restored, and each shiv owns reusable, isolated tint materials.
-Unknown child scripts and foreign Harmony factory/lifecycle patches opt out.
+`CombatVfxPoolPatches` keeps an explicit whitelist of completed stock damage
+numbers, hit sparks, shivs, big slashes and fire bursts within one combat room,
+with idle limits 16/8/8/2/2. Overflow still creates complete effects. The two new
+families use known particle-only trees and Task/CTS playback; no generic node
+snapshot expansion, VFX enumeration, card/creature/Spine state or startup-warmup
+spare retention is added. Original factories, Ready, randomization, screen shake
+and playback timing still execute. Immutable async leases prevent stale release;
+external removal keeps original destruction, and room exit frees idle instances.
+Re-rent restores transforms/colors/visibility, then Ready restarts particles and
+creates a new CTS. Shiv tint materials remain instance-local; slash/fire retain
+their original per-node SelfModulate tint. Unknown child scripts and foreign
+Harmony factory/lifecycle/tint patches opt out. Native regressions cover the new
+families' reset/replay, stale/cancelled leases, two-slot overflow and opt-outs;
+read-only original-DLL checks include their factory/playback/reset contracts.
+Effect counts, gameplay/network, preload scope and GC settings are unchanged;
+first-use resource loading and shader compilation may still stall.
 
 `AndroidFontSizeScaler` caches fixed metadata keys, leaves untouched 100% fonts
 inherited, and avoids equal-value setters/auto-size adjustments. Scaling and

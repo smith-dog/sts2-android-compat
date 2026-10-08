@@ -101,9 +101,28 @@ Current implementation (`STS2AndroidPortCompat`):
   is available through `tools/test-deferred-mod-patch-queue.sh`; it covers
   direct patches, PatchAll jobs, target factories, resource cctors, pool
   registration/freeze boundaries, failure isolation and duplicate-flush idempotence.
-- `ShaderCompatibilityPatches` loads `port_compat.pck` and applies the mobile
-  shader replacements copied from the old port when
-  `shader_compatibility_mode` is enabled; it intentionally keeps the original
+- `ShaderCompatibilityPatches` loads `port_compat.pck` and applies a finite, explicit
+  resource-path allowlist of handwritten Godot 4 canvas-item variants when
+  `shader_compatibility_mode` is enabled. Screen-sensitive variants retain their
+  `SCREEN_UV`/screen-texture path and must not degrade to a solid white or black
+  output; this is a visual contract, not a claim of GPU-identical output. A loaded
+  replacement `Shader` may be reused, but every CanvasItem receives its own
+  duplicated `ShaderMaterial`, so per-node uniforms and the original shared
+  material stay isolated. The current variant set includes card portrait and
+  non-Ancient canvas-group blur, water reflection, flipbook/row-flipbook,
+  screen chromatic aberration, HSV, scry reveal, rest-site light, Vantom oil,
+  and hash-allowlisted generated fire/VFX variants. `SceneTree.NodeAdded` only
+  observes CanvasItem nodes; Spine slot materials and material assignments that
+  happen outside the deferred NodeAdded batch are not automatically covered.
+  Known `AssetCache.GetMaterial()` and `NCard.Reload()` repair paths explicitly
+  bind replacement material copies; the current integration exposes no generic
+  late-material helper, so callers must not assume arbitrary dynamic assignments
+- Inline VisualShader resources with no stable resource path are handled only by
+  an exact generated-code SHA-256 allowlist plus a built-in source identity prefix
+  (`res://scenes/`, `res://images/`, or `res://shaders/`). `res://mods/`,
+  `res://user/`, and other roots are excluded; a hash match alone is not enough.
+  The allowlist is audited against the v0.111.0 generated code and does not
+  provide a generic arbitrary-inline fallback. It intentionally keeps the original
   `canvas_group_mask_blur.gdshader` card/Ancient-card face shader and does not
   ship the old mobile substitute because it can render Ancient card faces solid
   white.

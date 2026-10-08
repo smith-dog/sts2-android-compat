@@ -11,6 +11,43 @@ namespace MegaCrit.Sts2.Core.Nodes
         public override void _Ready() { }
     }
 }
+
+namespace MegaCrit.Sts2.Core.Assets
+{
+    public class AssetCache
+    {
+        public Material GetMaterial(string path) => null;
+    }
+}
+
+namespace MegaCrit.Sts2.Core.Nodes.Cards
+{
+    public partial class NCard : Node
+    {
+        private void Reload() { }
+    }
+}
+namespace MegaCrit.Sts2.Core.Nodes.Screens.MainMenu
+{
+    public partial class NMainMenu : Node
+    {
+        public override void _Ready() { }
+    }
+}
+namespace MegaCrit.Sts2.Core.Nodes.Screens.Timeline
+{
+    public partial class NEpochSlot : Node
+    {
+        public override void _Ready() { }
+    }
+}
+namespace MegaCrit.Sts2.Core.Nodes.Vfx
+{
+    public partial class NRadialBlurVfx : Node
+    {
+        public override void _Ready() { }
+    }
+}
 namespace MegaCrit.Sts2.Core.Nodes.Rooms
 {
     public partial class NCombatRoom : Node

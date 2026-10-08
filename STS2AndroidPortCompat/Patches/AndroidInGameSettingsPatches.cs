@@ -783,6 +783,7 @@ public static class AndroidInGameSettingsPatches
         (DisplaySettingsPatches.ScreenRotationUserLandscape, T("跟随系统", "Follow system")),
         (DisplaySettingsPatches.ScreenRotationLandscape, T("不旋转", "No rotation")),
         (DisplaySettingsPatches.ScreenRotationReverseLandscape, T("旋转 180°", "180°")),
+        (DisplaySettingsPatches.ScreenRotationPortrait, T("竖屏（需配合竖屏 MOD）", "Portrait (requires portrait UI MOD)")),
     };
 
     private static void AddSliderRow(VBoxContainer content, string key, string label, int min, int max, int step, int fallback, Func<int, string> format, Func<int, object> convert, Action<int> afterChanged)

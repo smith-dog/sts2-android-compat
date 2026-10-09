@@ -19,6 +19,7 @@ public static class DisplaySettingsPatches
         Unknown,
         UiScaleAuto,
         FixedAspect,
+        PortraitCompat,
     }
 
     private enum DeferredDisplayApplyKind
@@ -79,6 +80,7 @@ public static class DisplaySettingsPatches
     internal const string ScreenRotationUserLandscape = "user_landscape";
     internal const string ScreenRotationLandscape = "landscape";
     internal const string ScreenRotationReverseLandscape = "reverse_landscape";
+    internal const string ScreenRotationPortrait = "portrait";
 
     private const int MinimumRenderTargetDimension = 2;
     private const int MaximumDynamicRenderTargetDimension = 4096;
@@ -245,22 +247,29 @@ public static class DisplaySettingsPatches
         var renderSize = GetFullscreenRenderSize();
         var aspect = settings?.AspectRatioSetting ?? AspectRatioSetting.Auto;
         var scaleFactor = GetGlobalScale();
+        var rotationMode = GetAndroidScreenRotationMode();
+        bool portraitMode = rotationMode == ScreenRotationPortrait;
         UiScalePatches.EnsureUiScaleLoaded();
 
-        // Render resolution must never become the root Window's logical size: doing
-        // so changes the relative size of fixed-pixel controls/cards whenever the
-        // preset changes. Keep one stable CanvasItems layout target, then independently
-        // resize only the renderer-side root viewport below.
-        var owner = aspect != AspectRatioSetting.Auto
-            ? ContentScaleOwner.FixedAspect
-            : ContentScaleOwner.UiScaleAuto;
+        // Portrait compatibility mode owns the logical canvas shape so a portrait UI MOD
+        // can observe the real portrait root instead of being overwritten by a landscape
+        // aspect preset. The physical Android Surface remains owned by the Activity.
+        var owner = portraitMode
+            ? ContentScaleOwner.PortraitCompat
+            : aspect != AspectRatioSetting.Auto
+                ? ContentScaleOwner.FixedAspect
+                : ContentScaleOwner.UiScaleAuto;
         var targetMode = Window.ContentScaleModeEnum.CanvasItems;
-        var targetAspect = owner == ContentScaleOwner.FixedAspect
-            ? Window.ContentScaleAspectEnum.Keep
-            : Window.ContentScaleAspectEnum.Expand;
-        var targetSize = owner == ContentScaleOwner.FixedAspect
-            ? GetAspectContentScaleSize(aspect)
-            : UiScalePatches.GetScaledContentSize();
+        var targetAspect = portraitMode
+            ? Window.ContentScaleAspectEnum.Expand
+            : owner == ContentScaleOwner.FixedAspect
+                ? Window.ContentScaleAspectEnum.Keep
+                : Window.ContentScaleAspectEnum.Expand;
+        var targetSize = portraitMode
+            ? GetPortraitContentScaleSize(window)
+            : owner == ContentScaleOwner.FixedAspect
+                ? GetAspectContentScaleSize(aspect)
+                : UiScalePatches.GetScaledContentSize();
 
         var target = new ContentScaleTarget(owner, targetMode, targetAspect, targetSize, scaleFactor);
         long targetRevision = TrackContentScaleTarget(target);
@@ -604,6 +613,7 @@ public static class DisplaySettingsPatches
         }
         var orientation = mode switch
         {
+            ScreenRotationPortrait => DisplayServer.ScreenOrientation.Portrait,
             ScreenRotationLandscape => DisplayServer.ScreenOrientation.Landscape,
             ScreenRotationReverseLandscape => DisplayServer.ScreenOrientation.ReverseLandscape,
             _ => DisplayServer.ScreenOrientation.SensorLandscape,
@@ -643,6 +653,7 @@ public static class DisplaySettingsPatches
         {
             "none" or "normal" or "no_rotate" or "no_rotation" or ScreenRotationLandscape => ScreenRotationLandscape,
             "180" or "flip_180" or "rotate_180" or "reverse" or ScreenRotationReverseLandscape => ScreenRotationReverseLandscape,
+            "portrait_mode" or ScreenRotationPortrait => ScreenRotationPortrait,
             "user" or "system" or "follow_system" or ScreenRotationUserLandscape => ScreenRotationUserLandscape,
             ScreenRotationAuto or "sensor" or "sensor_landscape" or "auto_rotate" or "auto_rotation" => ScreenRotationAuto,
             _ => ScreenRotationUserLandscape,
@@ -672,6 +683,19 @@ public static class DisplaySettingsPatches
             AspectRatioSetting.TwentyOneByNine => new Vector2I(2580, 1080),
             _ => UiScalePatches.GetScaledContentSize(),
         };
+    }
+
+    private static Vector2I GetPortraitContentScaleSize(Window window)
+    {
+        int width = Math.Abs(window.Size.X);
+        int height = Math.Abs(window.Size.Y);
+        if (width < MinimumRenderTargetDimension || height < MinimumRenderTargetDimension)
+            return new Vector2I(1080, 1920);
+
+        int shortSide = Math.Min(width, height);
+        int longSide = Math.Max(width, height);
+        int portraitHeight = Math.Max(1080, (int)Math.Round(1080d * longSide / shortSide));
+        return new Vector2I(1080, portraitHeight);
     }
 
     private static bool SetContentScaleModeIfChanged(Window window, Window.ContentScaleModeEnum mode)

@@ -101,9 +101,28 @@ Current implementation (`STS2AndroidPortCompat`):
   is available through `tools/test-deferred-mod-patch-queue.sh`; it covers
   direct patches, PatchAll jobs, target factories, resource cctors, pool
   registration/freeze boundaries, failure isolation and duplicate-flush idempotence.
-- `ShaderCompatibilityPatches` loads `port_compat.pck` and applies the mobile
-  shader replacements copied from the old port when
-  `shader_compatibility_mode` is enabled; it intentionally keeps the original
+- `ShaderCompatibilityPatches` loads `port_compat.pck` and applies a finite, explicit
+  resource-path allowlist of handwritten Godot 4 canvas-item variants when
+  `shader_compatibility_mode` is enabled. Screen-sensitive variants retain their
+  `SCREEN_UV`/screen-texture path and must not degrade to a solid white or black
+  output; this is a visual contract, not a claim of GPU-identical output. A loaded
+  replacement `Shader` may be reused, but every CanvasItem receives its own
+  duplicated `ShaderMaterial`, so per-node uniforms and the original shared
+  material stay isolated. The current variant set includes card portrait and
+  non-Ancient canvas-group blur, water reflection, flipbook/row-flipbook,
+  screen chromatic aberration, HSV, scry reveal, rest-site light, Vantom oil,
+  and hash-allowlisted generated fire/VFX variants. `SceneTree.NodeAdded` only
+  observes CanvasItem nodes; Spine slot materials and material assignments that
+  happen outside the deferred NodeAdded batch are not automatically covered.
+  Known `AssetCache.GetMaterial()` and `NCard.Reload()` repair paths explicitly
+  bind replacement material copies; the current integration exposes no generic
+  late-material helper, so callers must not assume arbitrary dynamic assignments
+- Inline VisualShader resources with no stable resource path are handled only by
+  an exact generated-code SHA-256 allowlist plus a built-in source identity prefix
+  (`res://scenes/`, `res://images/`, or `res://shaders/`). `res://mods/`,
+  `res://user/`, and other roots are excluded; a hash match alone is not enough.
+  The allowlist is audited against the v0.111.0 generated code and does not
+  provide a generic arbitrary-inline fallback. It intentionally keeps the original
   `canvas_group_mask_blur.gdshader` card/Ancient-card face shader and does not
   ship the old mobile substitute because it can render Ancient card faces solid
   white.
@@ -167,6 +186,13 @@ Current implementation (`STS2AndroidPortCompat`):
   `PeerVersionInfo.LocalDefault()` into the original host/client services and
   lets the original transport-level `HandshakeManager` own version, ModelDb
   hash, and MOD compatibility validation.
+- In-game Android settings expose the launcher's display refresh-rate modes:
+  `android_display_refresh_rate_mode=high/60hz/system`, with high refresh as the
+  default. Changes call the Java Activity bridge immediately, and
+  `AndroidSettingsMerge` preserves the string through the game's typed settings
+  save. Legacy booleans migrate in the launcher; no legacy key is written back.
+  A 60Hz request requires an exposed compatible target; follow-system clears the
+  app's Window/Surface request. Neither mode changes the game's FPS cap or VSync.
 - Layout scale subscriptions are owned by scene-node lifetime: detach on
   `TreeExiting`, restore on reentry, and ignore repeated Ready registration.
   Old rooms and event layouts no longer need a later scale change to be collectible.

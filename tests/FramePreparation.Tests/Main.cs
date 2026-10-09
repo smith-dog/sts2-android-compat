@@ -26,6 +26,7 @@ public partial class Main : Node
             await Frame();
             await CheckShaderLifecycle(game);
             await CheckVfxReuse();
+            await CheckExpandedVfxReuse();
             await CheckRuntimeBudgets();
             await CheckMenuLayoutRoundTrip();
             await CheckFontScaling();
@@ -49,26 +50,44 @@ public partial class Main : Node
     }
     private static ShaderMaterial Original(string path = "res://shaders/dark_blur.gdshader")
     {
-        var shader = new Shader { Code = "shader_type canvas_item; uniform float weight = 1.0; void fragment() { COLOR *= weight; }" };
+        var shader = new Shader
+        {
+            Code = "shader_type canvas_item; uniform sampler2D SCREEN_TEXTURE : hint_screen_texture, filter_linear_mipmap; uniform float mix_percentage = 1.0; uniform bool mask = false; void fragment() { COLOR = texture(SCREEN_TEXTURE, SCREEN_UV) * mix_percentage; }"
+        };
         shader.TakeOverPath(path);
         var material = new ShaderMaterial { Shader = shader };
-        material.SetShaderParameter("weight", 0.75f);
+        material.SetShaderParameter("mix_percentage", 0.75f);
         return material;
     }
     private static bool Replaced(CanvasItem item) => item.Material is ShaderMaterial material
         && material.Shader.ResourcePath == "res://shaders/mobile_compat/dark_blur_compat.gdshader";
+    private static bool IsSolidColorReplacement(ShaderMaterial material)
+    {
+        var code = (material.Shader?.Code ?? string.Empty).Replace(" ", string.Empty)
+            .Replace("\t", string.Empty).Replace("\r", string.Empty).Replace("\n", string.Empty);
+        return code.Contains("COLOR=vec4(0.0", StringComparison.Ordinal)
+            || code.Contains("COLOR=vec4(1.0", StringComparison.Ordinal);
+    }
 
     private async Task CheckShaderLifecycle(NGame game)
     {
         var shared = Original();
+        Require(shared.Shader.Code.Contains("SCREEN_TEXTURE", StringComparison.Ordinal)
+            && shared.Shader.Code.Contains("SCREEN_UV", StringComparison.Ordinal),
+            "The synthetic source must exercise a screen-sensitive shader replacement.");
         var parent = new MaterialParent { SharedMaterial = shared };
         game.AddChild(parent);
         await Frame();
         Require(Replaced(parent.First) && Replaced(parent.Second), "Materials assigned by parent _Ready must be replaced.");
+        var firstReplacement = (ShaderMaterial)parent.First.Material;
+        var secondReplacement = (ShaderMaterial)parent.Second.Material;
+        Require(!ReferenceEquals(firstReplacement, secondReplacement)
+            && !IsSolidColorReplacement(firstReplacement) && !IsSolidColorReplacement(secondReplacement),
+            "Screen-sensitive replacements must remain dynamic and use independent material instances.");
         Require(ReferenceEquals(shared.Shader, parent.SharedMaterial.Shader)
             && shared.Shader.ResourcePath == "res://shaders/dark_blur.gdshader", "Do not mutate the original shared material.");
-        ((ShaderMaterial)parent.First.Material).SetShaderParameter("weight", 0.25f);
-        Require(Math.Abs(((ShaderMaterial)parent.Second.Material).GetShaderParameter("weight").AsSingle() - 0.75f) < 0.001f,
+        firstReplacement.SetShaderParameter("mix_percentage", 0.25f);
+        Require(Math.Abs(secondReplacement.GetShaderParameter("mix_percentage").AsSingle() - 0.75f) < 0.001f,
             "Replacement materials must retain per-node parameter isolation.");
 
         parent.RemoveChild(parent.First);
@@ -91,6 +110,11 @@ public partial class Main : Node
         parent.AddChild(excluded);
         await Frame();
         Require(((ShaderMaterial)excluded.Material).Shader.ResourcePath.EndsWith("canvas_group_mask_blur.gdshader"), "Card-mask shader must remain excluded.");
+        var maskedMaterial = Original("res://shaders/blur/canvas_group_mask_blur.gdshader");
+        maskedMaterial.SetShaderParameter("mask", true);
+        Material maskedResult = maskedMaterial;
+        ShaderCompatibilityPatches.GetMaterialPostfix("res://scenes/cards/card_canvas_group_blur_material.tres", ref maskedResult);
+        Require(ReferenceEquals(maskedResult, maskedMaterial), "Ancient-card mask materials must not use the ordinary blur replacement.");
         AndroidSettingsBridge.Enabled = false;
         ShaderCompatibilityPatches.RefreshSettings();
         var disabled = new ColorRect { Material = shared };

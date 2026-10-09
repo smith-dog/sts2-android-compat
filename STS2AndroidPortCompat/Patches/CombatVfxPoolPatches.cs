@@ -98,11 +98,15 @@ internal static class CombatVfxPoolPatches
             Install(typeof(NDamageNumVfx), "AnimVfx", 16);
             Install(typeof(NHitSparkVfx), "FlashAndFree", 8);
             Install(typeof(NShivThrowVfx), "PlaySequence", 8);
+            // Particle-only families restart their particles and replace the CTS on Ready.
+            // No card/creature references, animation players or Spine state are retained.
+            Install(typeof(NBigSlashVfx), "PlaySequence", 2);
+            Install(typeof(NFireBurstVfx), "PlaySequence", 2);
             _harmony.Patch(AccessTools.Method(typeof(GodotTreeExtensions), "QueueFreeSafely", new[] { typeof(Node) }),
                 prefix: new HarmonyMethod(typeof(CombatVfxPoolPatches), nameof(QueueFreePrefix)));
             _harmony.Patch(AccessTools.Method(typeof(NShivThrowVfx), "ApplyTint"),
                 prefix: new HarmonyMethod(typeof(CombatVfxPoolPatches), nameof(TintPrefix)));
-            PatchHelper.Log($"Combat VFX reuse enabled: per-room retained limits damage=16 hit=8 shiv=8; overflow uses original allocation. pool_scope={AndroidSettingsBridge.GetString("preload_vfx_pool_scope", "all")}");
+            PatchHelper.Log($"Combat VFX reuse enabled: per-room retained limits damage=16 hit=8 shiv=8 big-slash=2 fire-burst=2; overflow uses original allocation. pool_scope={AndroidSettingsBridge.GetString("preload_vfx_pool_scope", "all")}");
             // TASK-051 (2026-10-03): the generic pool is back. Its earlier
             // removal blamed the day's crashes on mass patching, but those
             // crashes were the pre-existing Godot static-StringName recycling
@@ -539,12 +543,15 @@ internal static class CombatVfxPoolPatches
                 .Where(method => method.Name == "Create" && (!verifyFactoryIL || PatchProcessor.GetOriginalInstructions(method).Any(instruction => IsInstantiation(instruction, type)))).ToArray();
             if (Factories.Length == 0) throw new MissingMethodException(type.FullName, "Create/Instantiate");
             GuardedMethods = type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
-                .Where(method => method.Name is "Create" or "_Ready" or "_ExitTree" or "ApplyTint" || method == Play).ToArray();
+                .Where(method => method.Name is "Create" or "_Ready" or "_ExitTree" or "ApplyTint" or "ModulateParticles" || method == Play).ToArray();
             if (type == typeof(NShivThrowVfx))
                 TintedParticles = AccessTools.FieldRefAccess<NShivThrowVfx, Godot.Collections.Array<GpuParticles2D>>("_modulateParticles");
             TransientField = AccessTools.Field(type, type == typeof(NDamageNumVfx) ? "_tween" : type == typeof(NHitSparkVfx) ? "_creatureNode" : "_cts");
             CancelTokens = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)
                 .Where(field => field.FieldType == typeof(CancellationTokenSource)).ToArray();
+            if ((type == typeof(NBigSlashVfx) || type == typeof(NFireBurstVfx))
+                && TransientField?.FieldType != typeof(CancellationTokenSource))
+                throw new InvalidOperationException($"Unknown VFX cancellation/reset contract: {type}");
         }
 
         internal bool AllowsReuse() => GuardedMethods.All(method => Harmony.GetPatchInfo(method)?.Owners.All(owner => owner == _harmony.Id) != false);

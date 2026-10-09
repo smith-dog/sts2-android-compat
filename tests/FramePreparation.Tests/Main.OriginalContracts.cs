@@ -28,11 +28,15 @@ public partial class Main
                     && (il[index - 1].OpCode == OpCodes.Ldloca || il[index - 1].OpCode == OpCodes.Ldloca_S),
                     $"Unsupported original queue guard shape: {path}: {name}");
             }
-            foreach (var spec in new[] { ("NDamageNumVfx", "AnimVfx", "_tween"), ("NHitSparkVfx", "FlashAndFree", "_creatureNode"), ("NShivThrowVfx", "PlaySequence", "_cts") })
+            foreach (var spec in new[] { ("NDamageNumVfx", "AnimVfx", "_tween"), ("NHitSparkVfx", "FlashAndFree", "_creatureNode"), ("NShivThrowVfx", "PlaySequence", "_cts"), ("NBigSlashVfx", "PlaySequence", "_cts"), ("NFireBurstVfx", "PlaySequence", "_cts") })
             {
                 var type = types.Single(candidate => candidate.FullName == "MegaCrit.Sts2.Core.Nodes.Vfx." + spec.Item1);
                 Require(type.Methods.Any(method => method.Name == spec.Item2 && method.ReturnType.FullName == "System.Threading.Tasks.Task")
                     && type.Fields.Any(field => field.Name == spec.Item3), $"Unsupported original playback/reset shape: {path}: {spec.Item1}");
+                if (spec.Item1 is "NBigSlashVfx" or "NFireBurstVfx")
+                    Require(type.Fields.Any(field => field.Name == "_cts"
+                        && field.FieldType.FullName == "System.Threading.CancellationTokenSource"),
+                        $"Unsupported original particle VFX cancellation type: {path}: {spec.Item1}");
                 Require(type.Methods.Where(method => method.IsStatic && method.Name == "Create" && method.HasBody)
                     .Any(method => method.Body.Instructions.Any(instruction => instruction.Operand is GenericInstanceMethod call
                         && call.Name == "Instantiate" && call.DeclaringType.FullName == "Godot.PackedScene"

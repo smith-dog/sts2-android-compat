@@ -173,9 +173,13 @@ public static class ModEntry
         // no pooling active; upstream has the same Android+C# crash cluster
         // (godotengine/godot #92590/#92319/#97798). Escape hatch without a
         // rebuild: settings key preload_vfx_pool_scope=stock.
+#if STS2_DIAG
+        ApplyPatchGroup("Android frame time recorder", () => AndroidFrameTimeRecorderPatches.Apply(_harmony));
+#else
         // AndroidFrameTimeRecorderPatches (FrameDiag window/stall logging) is
-        // diagnostics-only and stays unregistered in normal builds; apply it
-        // manually when frame profiling is needed.
+        // diagnostics-only and stays unregistered in normal builds. Build the
+        // diagnostics DLL with -p:Sts2Diag=true instead of editing this line.
+#endif
         ApplyPatchGroup("LAN/mod-loader diagnostic patches", () =>
         {
             LanMultiplayerBootstrapPatches.Apply(_harmony);

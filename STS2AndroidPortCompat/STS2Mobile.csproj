@@ -6,6 +6,11 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
   </PropertyGroup>
+  <!-- Diagnostics-only build switch: registers the per-frame time recorder in
+       ModEntry. Release/normal builds must not define it. -->
+  <PropertyGroup Condition="'$(Sts2Diag)' == 'true'">
+    <DefineConstants>$(DefineConstants);STS2_DIAG</DefineConstants>
+  </PropertyGroup>
   <ItemGroup>
     <Reference Include="0Harmony">
       <HintPath>$(CompatReferenceDir)/0Harmony.dll</HintPath>

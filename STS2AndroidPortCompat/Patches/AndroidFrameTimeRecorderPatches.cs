@@ -38,6 +38,13 @@ public static class AndroidFrameTimeRecorderPatches
     private static bool _started;
     private static bool _broken;
 
+    // The frame timing itself is cheap; the game's own MemoryProfiler.LogSnapshot() walks the
+    // whole scene, so it is the part that measurably inflates the very frames being measured
+    // (2026-10-02: a >150ms stall triggered one traversal every 5s). Key off by default-on to
+    // keep the historical behavior; read once at start, like every other recorder gate, so a
+    // mid-session toggle cannot half-apply.
+    private static bool _snapshotsEnabled;
+
     private static int _frames;
     private static int _windowFrames;
     private static double _windowSumMs;
@@ -69,8 +76,9 @@ public static class AndroidFrameTimeRecorderPatches
             _frameCallable = Callable.From(SampleFrame);
             tree.Connect(SceneTree.SignalName.ProcessFrame, _frameCallable);
             _started = true;
+            _snapshotsEnabled = AndroidSettingsBridge.GetBool("preload_diag_snapshots", true);
             MemoryProfiler.SetBaseline();
-            PatchHelper.Log($"[FrameDiag] recorder started: first window={FirstWindowFrames} frames then {WindowFrames} frames, slow>{SlowMilliseconds}ms, stall>{StallMilliseconds}ms.");
+            PatchHelper.Log($"[FrameDiag] recorder started: first window={FirstWindowFrames} frames then {WindowFrames} frames, slow>{SlowMilliseconds}ms, stall>{StallMilliseconds}ms, snapshots={(_snapshotsEnabled ? "on" : "off")}.");
         }
         catch (Exception exception)
         {
@@ -134,7 +142,7 @@ public static class AndroidFrameTimeRecorderPatches
                     // Metric unavailability must not break the recorder; keep raw timing only.
                 }
                 PatchHelper.Log($"[FrameDiag] stall t={nowMs} ms={ms:F1} frame={_frames:N0} phase={CurrentPhase()} setup={setupUsec / 1000.0:F1}ms draws={drawCalls:N0} prims={primitives:N0} gc0={System.GC.CollectionCount(0)} gc1={System.GC.CollectionCount(1)} gc2={System.GC.CollectionCount(2)}.");
-                if (ms > SnapshotMilliseconds && (_lastSnapshotMs == 0UL || nowMs - _lastSnapshotMs >= SnapshotThrottleMs))
+                if (_snapshotsEnabled && ms > SnapshotMilliseconds && (_lastSnapshotMs == 0UL || nowMs - _lastSnapshotMs >= SnapshotThrottleMs))
                 {
                     _lastSnapshotMs = nowMs;
                     MemoryProfiler.LogSnapshot($"slow-frame:{ms:F0}ms");
@@ -167,7 +175,8 @@ public static class AndroidFrameTimeRecorderPatches
             $"[<=25]={Buckets[4]:N0}[<=33]={Buckets[5]:N0}[<=50]={Buckets[6]:N0}[<=100]={Buckets[7]:N0}[>100]={Buckets[8]:N0}.");
         // The game's profiler prints StaticMem/VRAM/objects/nodes/orphans/cached assets/GC generations
         // against the startup baseline and against the previous snapshot.
-        MemoryProfiler.LogSnapshot($"android-frame-window:{_windowFrames}f");
+        if (_snapshotsEnabled)
+            MemoryProfiler.LogSnapshot($"android-frame-window:{_windowFrames}f");
         _windowFrames = 0;
         _windowSumMs = 0.0;
         _windowMaxMs = 0.0;
